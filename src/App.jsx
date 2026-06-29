@@ -224,12 +224,12 @@ async function fetchCandles(symbol, timeframe, apiKey) {
   const candles = Array.isArray(data) ? data : data?.data;
   if (!Array.isArray(candles)) throw new Error(JSON.stringify(data).slice(0, 120));
   return candles.map(d => ({
-    time: d.time || d.t,
-    open: parseFloat(d.open || d.o),
-    high: parseFloat(d.high || d.h),
-    low: parseFloat(d.low || d.l),
-    close: parseFloat(d.close || d.c),
-    volume: parseFloat(d.volume || d.v || 0),
+    time: d.time || d.t || d.timestamp,
+    open: parseFloat(d.open || d.o || d.Open || 0),
+    high: parseFloat(d.high || d.h || d.High || d.max || 0),
+    low: parseFloat(d.low || d.l || d.Low || d.min || 0),
+    close: parseFloat(d.close || d.c || d.Close || d.current || 0),
+    volume: parseFloat(d.volume || d.v || d.Volume || 0),
   })).filter(d => d.open && d.high && d.low && d.close);
 }
 
