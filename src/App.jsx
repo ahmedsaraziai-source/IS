@@ -221,12 +221,9 @@ async function fetchCandles(symbol, timeframe, apiKey) {
   const data = await res.json();
 
   // Normalize: API returns array of {time, open, high, low, close, volume}
-  if (!Array.isArray(data)) {
-  // Show exactly what the API returned
-  throw new Error(JSON.stringify(data).slice(0, 120));
-}
-
-  return data.map(d => ({
+  const candles = Array.isArray(data) ? data : data?.data;
+  if (!Array.isArray(candles)) throw new Error(JSON.stringify(data).slice(0, 120));
+  return candles.map(d => ({
     time: d.time || d.t,
     open: parseFloat(d.open || d.o),
     high: parseFloat(d.high || d.h),
