@@ -205,13 +205,10 @@ function analyzeCandles(candles) {
 }
 
 // ── API fetch ──
-// The batch endpoint returns multiple symbols at once; we call it once per symbol
-// to get a history array by varying the timeframe parameter correctly.
 async function fetchCandles(symbol, timeframe, apiKey) {
   const tf = TF_MAP[timeframe];
   const range = timeframe === "D" ? 60 : timeframe === "4H" ? 80 : 100;
 
-  // POST batch endpoint returns candle arrays per symbol
   const url = `https://${RAPIDAPI_HOST}/api/price/batch`;
 
   const res = await fetch(url, {
@@ -222,41 +219,30 @@ async function fetchCandles(symbol, timeframe, apiKey) {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      symbols: [symbol],
-      timeframe: tf,
-      range: range,
-      type: "Japanese",
+      requests: [{ symbol, timeframe: tf, range, type: "Japanese" }],
     }),
   });
 
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const raw = await res.json();
 
-  // POST batch returns { symbol: [ {time, open, max, min, close/current} ] }
-  // Try to extract the candle array for our symbol
+  // Expected: array of results, one per request
+  // Each result: { symbol, data: [{time, open, max, min, close/current}] }
   let arr = null;
 
   if (Array.isArray(raw)) {
-    arr = raw;
+    const item = raw[0];
+    arr = item?.data ?? item?.candles ?? item?.bars ?? (Array.isArray(item) ? item : null);
   } else if (Array.isArray(raw?.data)) {
-    // Could be { data: [ {symbol, candles:[]} ] } or { data: [ bar, bar, ... ] }
-    if (raw.data[0]?.candles) {
-      arr = raw.data[0].candles;
-    } else if (raw.data[0]?.data) {
-      arr = raw.data[0].data;
-    } else {
-      arr = raw.data;
-    }
+    const item = raw.data[0];
+    arr = item?.data ?? item?.candles ?? (Array.isArray(item) ? item : null) ?? raw.data;
   } else if (typeof raw === "object") {
-    // Could be keyed by symbol: { "FX:EURUSD": [...] }
     const val = raw[symbol] ?? Object.values(raw)[0];
-    if (Array.isArray(val)) arr = val;
-    else if (Array.isArray(val?.data)) arr = val.data;
-    else if (Array.isArray(val?.candles)) arr = val.candles;
+    arr = Array.isArray(val) ? val : val?.data ?? val?.candles ?? null;
   }
 
   if (!arr || arr.length === 0)
-    throw new Error("Batch empty: " + JSON.stringify(raw).slice(0, 120));
+    throw new Error("Still empty: " + JSON.stringify(raw).slice(0, 150));
 
   const candles = arr.map(d => ({
     time:   d.time ?? d.t ?? 0,
@@ -268,7 +254,7 @@ async function fetchCandles(symbol, timeframe, apiKey) {
   })).filter(d => d.open > 0 && d.close > 0 && d.high > 0 && d.low > 0);
 
   if (candles.length < 10)
-    throw new Error(`${candles.length} candles. raw[0]: ${JSON.stringify(arr[0]).slice(0,100)}`);
+    throw new Error(`${candles.length} candles. raw: ${JSON.stringify(raw).slice(0,150)}`);
 
   return candles;
 }
