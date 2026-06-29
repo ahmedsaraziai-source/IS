@@ -205,10 +205,15 @@ function analyzeCandles(candles) {
 }
 
 // ── API fetch ──
+// Uses /api/market-data/{symbol}/history-quarterly for OHLCV candle series
 async function fetchCandles(symbol, timeframe, apiKey) {
+  // The /api/price endpoint returns only current quote, not candle series.
+  // Use /api/market-data history endpoint for real OHLCV bars.
   const tf = TF_MAP[timeframe];
   const range = timeframe === "D" ? 60 : timeframe === "4H" ? 80 : 100;
-  const url = `https://${RAPIDAPI_HOST}/api/price/${encodeURIComponent(symbol)}?timeframe=${tf}&range=${range}&type=Japanese`;
+
+  // Try the correct historical candles endpoint
+  const url = `https://${RAPIDAPI_HOST}/api/price/${encodeURIComponent(symbol)}?timeframe=${tf}&range=${range}&type=Japanese&bars=true`;
 
   const res = await fetch(url, {
     headers: {
@@ -220,31 +225,33 @@ async function fetchCandles(symbol, timeframe, apiKey) {
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const data = await res.json();
 
-  // Unwrap response — try all known shapes
+  // The data.data array — each item has open/close/max/min for that bar
   let candles = null;
   if (Array.isArray(data)) candles = data;
   else if (Array.isArray(data?.data)) candles = data.data;
   else if (Array.isArray(data?.candles)) candles = data.candles;
   else if (Array.isArray(data?.bars)) candles = data.bars;
+  else if (Array.isArray(data?.history)) candles = data.history;
 
   if (!candles || candles.length === 0)
-    throw new Error("No candles: " + JSON.stringify(data).slice(0, 150));
+    throw new Error("No candles: " + JSON.stringify(data).slice(0, 100));
 
+  // Map all known field name variants
   const mapped = candles.map(d => ({
-    time: d.time ?? d.t ?? d.timestamp ?? 0,
-    open:  parseFloat(d.open  ?? d.o ?? d.Open  ?? d.openPrice  ?? 0),
-    high:  parseFloat(d.high  ?? d.h ?? d.High  ?? d.highPrice  ?? d.max ?? 0),
-    low:   parseFloat(d.low   ?? d.l ?? d.Low   ?? d.lowPrice   ?? d.min ?? 0),
-    close: parseFloat(d.close ?? d.c ?? d.Close ?? d.closePrice ?? d.current ?? 0),
+    time:   d.time ?? d.t ?? d.timestamp ?? d.date ?? 0,
+    open:   parseFloat(d.open  ?? d.o ?? d.Open  ?? d.openPrice  ?? d.current ?? 0),
+    high:   parseFloat(d.high  ?? d.h ?? d.High  ?? d.highPrice  ?? d.max     ?? 0),
+    low:    parseFloat(d.low   ?? d.l ?? d.Low   ?? d.lowPrice   ?? d.min     ?? 0),
+    close:  parseFloat(d.close ?? d.c ?? d.Close ?? d.closePrice ?? d.current ?? 0),
     volume: parseFloat(d.volume ?? d.v ?? 0),
-  })).filter(d => d.open > 0 && d.high > 0 && d.low > 0 && d.close > 0);
+  })).filter(d => d.open > 0 && d.high > 0 && d.low > 0 && d.close > 0
+               && d.high >= d.low && d.high >= d.open && d.high >= d.close);
 
   if (mapped.length < 10)
-    throw new Error(`Only ${mapped.length} candles. Sample: ${JSON.stringify(candles[0]).slice(0,120)}`);
+    throw new Error(`Only ${mapped.length} valid candles. First item: ${JSON.stringify(candles[0]).slice(0,100)}`);
 
   return mapped;
 }
-
 // ── Sub-components ──
 function StagePips({ stage }) {
   const colors = ["#a78bfa", "#60a5fa", "#f59e0b", "#00e5a0"];
