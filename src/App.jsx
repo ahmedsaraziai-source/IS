@@ -220,17 +220,29 @@ async function fetchCandles(symbol, timeframe, apiKey) {
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const data = await res.json();
 
-  // Normalize: API returns array of {time, open, high, low, close, volume}
-  const candles = Array.isArray(data) ? data : data?.data;
-  if (!Array.isArray(candles)) throw new Error(JSON.stringify(data).slice(0, 120));
-  return candles.map(d => ({
-    time: d.time || d.t || d.timestamp,
-    open: parseFloat(d.open || d.o || d.Open || 0),
-    high: parseFloat(d.high || d.h || d.High || d.max || 0),
-    low: parseFloat(d.low || d.l || d.Low || d.min || 0),
-    close: parseFloat(d.close || d.c || d.Close || d.current || 0),
-    volume: parseFloat(d.volume || d.v || d.Volume || 0),
-  })).filter(d => d.open && d.high && d.low && d.close);
+  // Unwrap response — try all known shapes
+  let candles = null;
+  if (Array.isArray(data)) candles = data;
+  else if (Array.isArray(data?.data)) candles = data.data;
+  else if (Array.isArray(data?.candles)) candles = data.candles;
+  else if (Array.isArray(data?.bars)) candles = data.bars;
+
+  if (!candles || candles.length === 0)
+    throw new Error("No candles: " + JSON.stringify(data).slice(0, 150));
+
+  const mapped = candles.map(d => ({
+    time: d.time ?? d.t ?? d.timestamp ?? 0,
+    open:  parseFloat(d.open  ?? d.o ?? d.Open  ?? d.openPrice  ?? 0),
+    high:  parseFloat(d.high  ?? d.h ?? d.High  ?? d.highPrice  ?? d.max ?? 0),
+    low:   parseFloat(d.low   ?? d.l ?? d.Low   ?? d.lowPrice   ?? d.min ?? 0),
+    close: parseFloat(d.close ?? d.c ?? d.Close ?? d.closePrice ?? d.current ?? 0),
+    volume: parseFloat(d.volume ?? d.v ?? 0),
+  })).filter(d => d.open > 0 && d.high > 0 && d.low > 0 && d.close > 0);
+
+  if (mapped.length < 10)
+    throw new Error(`Only ${mapped.length} candles. Sample: ${JSON.stringify(candles[0]).slice(0,120)}`);
+
+  return mapped;
 }
 
 // ── Sub-components ──
