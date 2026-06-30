@@ -205,56 +205,46 @@ function analyzeCandles(candles) {
 }
 
 // ── API fetch ──
+// RapidAPI TradingView Data1 — GET /api/price/{symbol}
+// Returns { success, data: [{symbol, time, open, current, max, min, ...}] }
+// Each item in data[] is ONE candle bar. "range" controls how many bars returned.
 async function fetchCandles(symbol, timeframe, apiKey) {
   const tf = TF_MAP[timeframe];
   const range = timeframe === "D" ? 60 : timeframe === "4H" ? 80 : 100;
 
-  const url = `https://${RAPIDAPI_HOST}/api/price/batch`;
+  // Correct parameter names based on API behaviour:
+  // timeframe = integer minutes (15, 60, 240) or "1D" for daily
+  // No "type" param — omit it
+  const url = `https://${RAPIDAPI_HOST}/api/price/${encodeURIComponent(symbol)}?timeframe=${tf}&range=${range}`;
 
   const res = await fetch(url, {
-    method: "POST",
     headers: {
       "x-rapidapi-host": RAPIDAPI_HOST,
       "x-rapidapi-key": apiKey,
-      "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      requests: [{ symbol, timeframe: tf, range, type: "Japanese" }],
-    }),
   });
 
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const raw = await res.json();
 
-  // Expected: array of results, one per request
-  // Each result: { symbol, data: [{time, open, max, min, close/current}] }
-  let arr = null;
-
-  if (Array.isArray(raw)) {
-    const item = raw[0];
-    arr = item?.data ?? item?.candles ?? item?.bars ?? (Array.isArray(item) ? item : null);
-  } else if (Array.isArray(raw?.data)) {
-    const item = raw.data[0];
-    arr = item?.data ?? item?.candles ?? (Array.isArray(item) ? item : null) ?? raw.data;
-  } else if (typeof raw === "object") {
-    const val = raw[symbol] ?? Object.values(raw)[0];
-    arr = Array.isArray(val) ? val : val?.data ?? val?.candles ?? null;
-  }
+  // Unwrap: { success: true, data: [ bar, bar, ... ] }
+  const arr = Array.isArray(raw) ? raw : Array.isArray(raw?.data) ? raw.data : null;
 
   if (!arr || arr.length === 0)
-    throw new Error("Still empty: " + JSON.stringify(raw).slice(0, 150));
+    throw new Error("Empty: " + JSON.stringify(raw).slice(0, 100));
 
+  // Field map: open=open, high=max, low=min, close=current or close
   const candles = arr.map(d => ({
     time:   d.time ?? d.t ?? 0,
-    open:   parseFloat(d.open   ?? d.o ?? 0),
-    high:   parseFloat(d.max    ?? d.high ?? d.h ?? 0),
-    low:    parseFloat(d.min    ?? d.low  ?? d.l ?? 0),
-    close:  parseFloat(d.close  ?? d.current ?? d.c ?? 0),
-    volume: parseFloat(d.volume ?? d.v ?? 0),
-  })).filter(d => d.open > 0 && d.close > 0 && d.high > 0 && d.low > 0);
+    open:   parseFloat(d.open    ?? 0),
+    high:   parseFloat(d.max     ?? d.high ?? 0),
+    low:    parseFloat(d.min     ?? d.low  ?? 0),
+    close:  parseFloat(d.current ?? d.close ?? 0),
+    volume: parseFloat(d.volume  ?? d.v ?? 0),
+  })).filter(d => d.open > 0 && d.high > 0 && d.low > 0 && d.close > 0);
 
   if (candles.length < 10)
-    throw new Error(`${candles.length} candles. raw: ${JSON.stringify(raw).slice(0,150)}`);
+    throw new Error(`Only ${candles.length} candles. raw[0]: ${JSON.stringify(arr[0]).slice(0,120)}`);
 
   return candles;
 }
