@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 
-// ── Symbol map: display name → TradingView API symbol ──
+// ── Symbol map: display name → TradingView EXCHANGE:SYMBOL format ──
 const SYMBOL_MAP = {
   "EUR/USD":  "FX:EURUSD",
   "GBP/USD":  "FX:GBPUSD",
@@ -16,7 +16,8 @@ const SYMBOL_MAP = {
 
 const PAIRS = Object.keys(SYMBOL_MAP);
 
-const TF_MAP = { "15m": 15, "1H": 60, "4H": 240, "D": "1D" };
+// Timeframe enum: 15=15min, 60=1hour, 240=4hour, D=Day
+const TF_MAP = { "15m": 15, "1H": 60, "4H": 240, "D": "D" };
 const TIMEFRAMES = Object.keys(TF_MAP);
 const SETUP_STAGES = ["Liquidity", "Displacement", "MSS", "FVG"];
 
@@ -205,16 +206,11 @@ function analyzeCandles(candles) {
 }
 
 // ── API fetch ──
-// RapidAPI TradingView Data1 — GET /api/price/{symbol}
-// Returns { success, data: [{symbol, time, open, current, max, min, ...}] }
-// Each item in data[] is ONE candle bar. "range" controls how many bars returned.
+// Response: { success, data: { symbol, current: {}, history: [{time,open,close,max,min,volume}] } }
 async function fetchCandles(symbol, timeframe, apiKey) {
   const tf = TF_MAP[timeframe];
   const range = timeframe === "D" ? 60 : timeframe === "4H" ? 80 : 100;
 
-  // Correct parameter names based on API behaviour:
-  // timeframe = integer minutes (15, 60, 240) or "1D" for daily
-  // No "type" param — omit it
   const url = `https://${RAPIDAPI_HOST}/api/price/${encodeURIComponent(symbol)}?timeframe=${tf}&range=${range}`;
 
   const res = await fetch(url, {
@@ -227,24 +223,24 @@ async function fetchCandles(symbol, timeframe, apiKey) {
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const raw = await res.json();
 
-  // Unwrap: { success: true, data: [ bar, bar, ... ] }
-  const arr = Array.isArray(raw) ? raw : Array.isArray(raw?.data) ? raw.data : null;
+  if (!raw.success) throw new Error(raw.error ?? "API error");
 
-  if (!arr || arr.length === 0)
-    throw new Error("Empty: " + JSON.stringify(raw).slice(0, 100));
+  // Candles are in data.history — each bar: {time, open, close, max, min, volume}
+  const hist = raw?.data?.history;
+  if (!Array.isArray(hist) || hist.length === 0)
+    throw new Error(`No history. Keys: ${Object.keys(raw?.data ?? {}).join(", ")}`);
 
-  // Field map: open=open, high=max, low=min, close=current or close
-  const candles = arr.map(d => ({
-    time:   d.time ?? d.t ?? 0,
-    open:   parseFloat(d.open    ?? 0),
-    high:   parseFloat(d.max     ?? d.high ?? 0),
-    low:    parseFloat(d.min     ?? d.low  ?? 0),
-    close:  parseFloat(d.current ?? d.close ?? 0),
-    volume: parseFloat(d.volume  ?? d.v ?? 0),
+  const candles = hist.map(d => ({
+    time:   d.time  ?? 0,
+    open:   parseFloat(d.open  ?? 0),
+    high:   parseFloat(d.max   ?? 0),
+    low:    parseFloat(d.min   ?? 0),
+    close:  parseFloat(d.close ?? 0),
+    volume: parseFloat(d.volume ?? 0),
   })).filter(d => d.open > 0 && d.high > 0 && d.low > 0 && d.close > 0);
 
   if (candles.length < 10)
-    throw new Error(`Only ${candles.length} candles. raw[0]: ${JSON.stringify(arr[0]).slice(0,120)}`);
+    throw new Error(`Only ${candles.length} candles`);
 
   return candles;
 }
