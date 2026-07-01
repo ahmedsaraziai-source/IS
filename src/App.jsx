@@ -25,32 +25,26 @@ const RAPIDAPI_HOST = "tradingview-data1.p.rapidapi.com";
 
 // ── ICT Detection Logic ──
 function detectICTSetup(candles, bias) {
-  // Need at least 30 candles
   if (!candles || candles.length < 30) return null;
 
   const c = candles;
   const last = c.length - 1;
-
-  // 1. LIQUIDITY: Find equal highs/lows (within 0.05%) in last 20 bars
   const lookback = Math.min(20, last - 5);
+
+  // 1. LIQUIDITY: Equal highs/lows swept
   let liquidityLevel = null;
   let liquidityIdx = null;
   let liquiditySwept = false;
 
   if (bias === "Bullish") {
-    // Look for equal lows (buy-side liquidity below)
     for (let i = last - lookback; i < last - 3; i++) {
       for (let j = i + 1; j < last - 1; j++) {
         const diff = Math.abs(c[i].low - c[j].low) / c[i].low;
         if (diff < 0.0008) {
-          // Check if a later candle swept below them
           const lvl = Math.min(c[i].low, c[j].low);
           for (let k = j + 1; k <= last; k++) {
             if (c[k].low < lvl) {
-              liquidityLevel = lvl;
-              liquidityIdx = k;
-              liquiditySwept = true;
-              break;
+              liquidityLevel = lvl; liquidityIdx = k; liquiditySwept = true; break;
             }
           }
           if (liquiditySwept) break;
@@ -59,7 +53,6 @@ function detectICTSetup(candles, bias) {
       if (liquiditySwept) break;
     }
   } else {
-    // Bearish: look for equal highs (sell-side liquidity above)
     for (let i = last - lookback; i < last - 3; i++) {
       for (let j = i + 1; j < last - 1; j++) {
         const diff = Math.abs(c[i].high - c[j].high) / c[i].high;
@@ -67,10 +60,7 @@ function detectICTSetup(candles, bias) {
           const lvl = Math.max(c[i].high, c[j].high);
           for (let k = j + 1; k <= last; k++) {
             if (c[k].high > lvl) {
-              liquidityLevel = lvl;
-              liquidityIdx = k;
-              liquiditySwept = true;
-              break;
+              liquidityLevel = lvl; liquidityIdx = k; liquiditySwept = true; break;
             }
           }
           if (liquiditySwept) break;
@@ -82,7 +72,7 @@ function detectICTSetup(candles, bias) {
 
   if (!liquiditySwept || liquidityIdx === null) return null;
 
-  // 2. DISPLACEMENT: Strong impulse candle after liquidity sweep
+  // 2. DISPLACEMENT: Strong impulse candle after sweep
   let displacementIdx = null;
   let displacementCandle = null;
 
@@ -90,96 +80,91 @@ function detectICTSetup(candles, bias) {
     const body = Math.abs(c[i].close - c[i].open);
     const range = c[i].high - c[i].low;
     const bodyRatio = range > 0 ? body / range : 0;
-
     if (bodyRatio > 0.6) {
       if (bias === "Bullish" && c[i].close > c[i].open) {
-        displacementIdx = i;
-        displacementCandle = c[i];
-        break;
+        displacementIdx = i; displacementCandle = c[i]; break;
       } else if (bias === "Bearish" && c[i].close < c[i].open) {
-        displacementIdx = i;
-        displacementCandle = c[i];
-        break;
+        displacementIdx = i; displacementCandle = c[i]; break;
       }
     }
   }
 
   if (!displacementIdx) return null;
 
-  // 3. MSS: Market Structure Shift after displacement
+  // 3. MSS: Market Structure Shift
   let mssLevel = null;
   let mssIdx = null;
 
   if (bias === "Bullish") {
-    // Find previous swing high before displacement — break above it = MSS
     let swingHigh = -Infinity;
-    for (let i = liquidityIdx - 5; i < liquidityIdx; i++) {
-      if (i >= 0 && c[i].high > swingHigh) swingHigh = c[i].high;
+    for (let i = Math.max(0, liquidityIdx - 5); i < liquidityIdx; i++) {
+      if (c[i].high > swingHigh) swingHigh = c[i].high;
     }
     for (let i = displacementIdx; i <= Math.min(displacementIdx + 8, last); i++) {
-      if (c[i].high > swingHigh) {
-        mssLevel = swingHigh;
-        mssIdx = i;
-        break;
-      }
+      if (c[i].high > swingHigh) { mssLevel = swingHigh; mssIdx = i; break; }
     }
   } else {
-    // Find previous swing low before displacement — break below = MSS
     let swingLow = Infinity;
-    for (let i = liquidityIdx - 5; i < liquidityIdx; i++) {
-      if (i >= 0 && c[i].low < swingLow) swingLow = c[i].low;
+    for (let i = Math.max(0, liquidityIdx - 5); i < liquidityIdx; i++) {
+      if (c[i].low < swingLow) swingLow = c[i].low;
     }
     for (let i = displacementIdx; i <= Math.min(displacementIdx + 8, last); i++) {
-      if (c[i].low < swingLow) {
-        mssLevel = swingLow;
-        mssIdx = i;
-        break;
-      }
+      if (c[i].low < swingLow) { mssLevel = swingLow; mssIdx = i; break; }
     }
   }
 
   if (!mssIdx) return null;
 
-  // 4. FVG: Fair Value Gap — 3-candle imbalance after MSS
+  // 4. FVG: Fair Value Gap after MSS
   let fvgHigh = null, fvgLow = null, fvgIdx = null;
 
   for (let i = mssIdx; i <= Math.min(mssIdx + 10, last - 2); i++) {
     const prev = c[i - 1];
-    const curr = c[i];
     const next = c[i + 1];
     if (!prev || !next) continue;
-
-    if (bias === "Bullish") {
-      // Bullish FVG: gap between candle[i-1].high and candle[i+1].low
-      if (next.low > prev.high) {
-        fvgLow = prev.high;
-        fvgHigh = next.low;
-        fvgIdx = i;
-        break;
-      }
-    } else {
-      // Bearish FVG: gap between candle[i+1].high and candle[i-1].low
-      if (next.high < prev.low) {
-        fvgHigh = prev.low;
-        fvgLow = next.high;
-        fvgIdx = i;
-        break;
-      }
+    if (bias === "Bullish" && next.low > prev.high) {
+      fvgLow = prev.high; fvgHigh = next.low; fvgIdx = i; break;
+    } else if (bias === "Bearish" && next.high < prev.low) {
+      fvgHigh = prev.low; fvgLow = next.high; fvgIdx = i; break;
     }
   }
 
   if (!fvgIdx) return null;
 
-  // Price returned into FVG?
+  // ── FRESHNESS FILTER: Only flag setups where FVG formed recently ──
+  const candlesSinceFVG = last - fvgIdx;
+
+  // FVG must have formed within last 10 candles to be actionable
+  if (candlesSinceFVG > 10) return null;
+
   const currentPrice = c[last].close;
+  const fvgMid = (fvgHigh + fvgLow) / 2;
+  const fvgSize = fvgHigh - fvgLow;
+
+  // Price must not have moved more than 3x the FVG size away from it
+  // (i.e. setup hasn't fully played out yet)
+  const distanceFromFVG = bias === "Bullish"
+    ? fvgMid - currentPrice   // bullish: price should be at or below FVG
+    : currentPrice - fvgMid;  // bearish: price should be at or above FVG
+
+  // If price has already moved more than 5x FVG size past the midpoint, skip
+  if (distanceFromFVG > fvgSize * 5) return null;
+
   const inFVG = currentPrice >= fvgLow && currentPrice <= fvgHigh;
   const nearFVG = bias === "Bullish"
     ? currentPrice <= fvgHigh * 1.002
     : currentPrice >= fvgLow * 0.998;
 
-  const confidence = inFVG ? 85 + Math.floor(Math.random() * 15)
-    : nearFVG ? 65 + Math.floor(Math.random() * 20)
-    : 50 + Math.floor(Math.random() * 15);
+  // Freshness score: more recent FVG = higher confidence
+  const freshnessBonus = Math.max(0, 10 - candlesSinceFVG) * 2;
+  const baseConfidence = inFVG ? 85 : nearFVG ? 70 : 55;
+  const confidence = Math.min(99, baseConfidence + freshnessBonus);
+
+  // Status label
+  const status = inFVG ? "IN_FVG"
+    : candlesSinceFVG <= 3 ? "JUST_FORMED"
+    : nearFVG ? "NEAR_FVG"
+    : "AWAITING";
 
   return {
     stage: 3,
@@ -190,12 +175,13 @@ function detectICTSetup(candles, bias) {
     fvgHigh: fvgHigh?.toFixed(5),
     fvgLow: fvgLow?.toFixed(5),
     currentPrice: currentPrice?.toFixed(5),
+    candlesSinceFVG,
     inFVG,
     nearFVG,
+    status,
     confidence,
   };
 }
-
 // Try both biases; return whichever finds a setup (bullish preferred)
 function analyzeCandles(candles) {
   const bull = detectICTSetup(candles, "Bullish");
@@ -287,11 +273,23 @@ function SetupCard({ s, onClick, selected }) {
             marginLeft: 6, fontSize: 10, background: "#1e2535", color: "#94a3b8",
             padding: "2px 6px", borderRadius: 4, fontFamily: "monospace"
           }}>{s.tf}</span>
-          {s.inFVG && (
+          {s.status === "IN_FVG" && (
             <span style={{
               marginLeft: 6, fontSize: 10, background: "#00e5a015", color: "#00e5a0",
               padding: "2px 6px", borderRadius: 4, border: "1px solid #00e5a030"
             }}>IN FVG</span>
+          )}
+          {s.status === "JUST_FORMED" && (
+            <span style={{
+              marginLeft: 6, fontSize: 10, background: "#f59e0b15", color: "#f59e0b",
+              padding: "2px 6px", borderRadius: 4, border: "1px solid #f59e0b30"
+            }}>🔥 FRESH</span>
+          )}
+          {s.status === "NEAR_FVG" && (
+            <span style={{
+              marginLeft: 6, fontSize: 10, background: "#60a5fa15", color: "#60a5fa",
+              padding: "2px 6px", borderRadius: 4, border: "1px solid #60a5fa30"
+            }}>NEAR</span>
           )}
         </div>
         <span style={{ fontSize: 11, color: biasColor, fontWeight: 600 }}>{s.bias}</span>
@@ -381,13 +379,14 @@ function DetailPanel({ s, onClose }) {
 
       {/* Trade idea */}
       <div style={{
-        background: s.inFVG ? "#00e5a008" : "#1e293808",
-        border: `1px solid ${s.inFVG ? "#00e5a025" : "#1e2535"}`,
+        background: s.status === "IN_FVG" ? "#00e5a008" : s.status === "JUST_FORMED" ? "#f59e0b08" : "#1e293808",
+        border: `1px solid ${s.status === "IN_FVG" ? "#00e5a025" : s.status === "JUST_FORMED" ? "#f59e0b25" : "#1e2535"}`,
         borderRadius: 10, padding: "14px 16px"
       }}>
-        <p style={{ color: s.inFVG ? "#00e5a0" : "#94a3b8", fontSize: 12, fontWeight: 700, margin: "0 0 8px", textTransform: "uppercase" }}>
-          {s.inFVG ? "✦ Price in FVG — Active Setup" : s.nearFVG ? "⚡ Approaching FVG" : "⏳ Awaiting Retrace"}
+        <p style={{ color: s.status === "IN_FVG" ? "#00e5a0" : s.status === "JUST_FORMED" ? "#f59e0b" : "#94a3b8", fontSize: 12, fontWeight: 700, margin: "0 0 8px", textTransform: "uppercase" }}>
+          {s.status === "IN_FVG" ? "✦ Price in FVG — Entry Zone Active" : s.status === "JUST_FORMED" ? "🔥 Fresh FVG — Setup Just Formed" : s.status === "NEAR_FVG" ? "⚡ Approaching FVG" : "⏳ Awaiting Retrace"}
         </p>
+        <p style={{ color: "#475569", fontSize: 11, margin: "0 0 8px" }}>FVG formed {s.candlesSinceFVG} candle{s.candlesSinceFVG !== 1 ? "s" : ""} ago</p>
         <p style={{ color: "#94a3b8", fontSize: 12, margin: 0, lineHeight: 1.6 }}>
           {s.bias === "Bullish"
             ? `Liquidity swept below equal lows. Bullish displacement confirmed. MSS broke prior swing high. ${s.inFVG ? "Price has retraced into the FVG — look for bullish confirmation (engulfing, pin bar) for long entries." : "Wait for price to retrace into FVG between " + s.fvgLow + " – " + s.fvgHigh + " before entry."}`
@@ -626,7 +625,7 @@ export default function ICTScannerLive() {
           border: `1px solid ${filterFVG ? "#00e5a040" : "transparent"}`,
           color: filterFVG ? "#00e5a0" : "#64748b",
           borderRadius: 4, padding: "3px 10px", cursor: "pointer", fontSize: 11
-        }}>In FVG only</button>
+        }}>Fresh only</button>
         <span style={{ fontSize: 11, color: "#334155", marginLeft: "auto" }}>
           {filtered.length} result{filtered.length !== 1 ? "s" : ""}
         </span>
