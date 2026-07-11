@@ -16,6 +16,39 @@ const SYMBOL_MAP = {
 
 const PAIRS = Object.keys(SYMBOL_MAP);
 
+// ── Pip / point config per instrument ──
+// "pip" here = 1 pip in price units, "maxSL" = max allowed stop in pips
+const PIP_CONFIG = {
+  // Forex: 1 pip = 0.0001
+  "EUR/USD": { pipSize: 0.0001, maxSLPips: 250 },
+  "GBP/USD": { pipSize: 0.0001, maxSLPips: 250 },
+  "AUD/USD": { pipSize: 0.0001, maxSLPips: 250 },
+  // JPY pairs: 1 pip = 0.01
+  "GBP/JPY": { pipSize: 0.01,   maxSLPips: 250 },
+  "USD/JPY": { pipSize: 0.01,   maxSLPips: 250 },
+  // Gold: 1 pip = $0.10, max 1000 pips = $100
+  "XAU/USD": { pipSize: 0.1,    maxSLPips: 1000 },
+  // BTC: 1 pip = $1, max 250 pips = $250
+  "BTC/USD": { pipSize: 1,      maxSLPips: 250 },
+  // ETH: 1 pip = $0.1, max 250 pips = $25
+  "ETH/USD": { pipSize: 0.1,    maxSLPips: 250 },
+  // Indices: 1 pip = $0.01 (ETF price), max 250 pips
+  "NAS100":  { pipSize: 0.01,   maxSLPips: 250 },
+  "US30":    { pipSize: 0.01,   maxSLPips: 250 },
+};
+
+function getMaxSLPrice(pair) {
+  const cfg = PIP_CONFIG[pair];
+  if (!cfg) return Infinity;
+  return cfg.maxSLPips * cfg.pipSize;
+}
+
+function getSLPips(pair, slPrice) {
+  const cfg = PIP_CONFIG[pair];
+  if (!cfg) return null;
+  return Math.round(slPrice / cfg.pipSize);
+}
+
 // Timeframe enum: 15=15min, 60=1hour, 240=4hour, D=Day
 const TF_MAP = { "15m": 15, "1H": 60, "4H": 240, "D": "D" };
 const TIMEFRAMES = Object.keys(TF_MAP);
@@ -150,6 +183,10 @@ function detectICTSetup(candles, bias) {
   // If price has already moved more than 5x FVG size past the midpoint, skip
   if (distanceFromFVG > fvgSize * 5) return null;
 
+  // ── SL FILTER: Stop loss = beyond liquidity sweep level ──
+  // For bullish: SL below liquidityLevel. For bearish: SL above liquidityLevel.
+  const slPrice = Math.abs(currentPrice - liquidityLevel);
+
   const inFVG = currentPrice >= fvgLow && currentPrice <= fvgHigh;
   const nearFVG = bias === "Bullish"
     ? currentPrice <= fvgHigh * 1.002
@@ -175,6 +212,7 @@ function detectICTSetup(candles, bias) {
     fvgHigh: fvgHigh?.toFixed(5),
     fvgLow: fvgLow?.toFixed(5),
     currentPrice: currentPrice?.toFixed(5),
+    slPrice,
     candlesSinceFVG,
     inFVG,
     nearFVG,
@@ -182,12 +220,16 @@ function detectICTSetup(candles, bias) {
     confidence,
   };
 }
-// Try both biases; return whichever finds a setup (bullish preferred)
-function analyzeCandles(candles) {
+// Try both biases; filter by max SL per instrument
+function analyzeCandles(candles, pair) {
+  const maxSL = getMaxSLPrice(pair);
+
   const bull = detectICTSetup(candles, "Bullish");
-  if (bull) return { ...bull, bias: "Bullish" };
+  if (bull && bull.slPrice <= maxSL) return { ...bull, bias: "Bullish" };
+
   const bear = detectICTSetup(candles, "Bearish");
-  if (bear) return { ...bear, bias: "Bearish" };
+  if (bear && bear.slPrice <= maxSL) return { ...bear, bias: "Bearish" };
+
   return null;
 }
 
@@ -314,6 +356,13 @@ function DetailPanel({ s, onClose }) {
   );
 
   const biasColor = s.bias === "Bullish" ? "#00e5a0" : "#f87171";
+  const cfg = PIP_CONFIG[s.pair] ?? { pipSize: 0.0001, maxSLPips: 250 };
+  const slPips = s.slPrice ? Math.round(s.slPrice / cfg.pipSize) : null;
+  const slLevel = s.bias === "Bullish"
+    ? (parseFloat(s.liquidityLevel) - (s.slPrice ?? 0)).toFixed(5)
+    : (parseFloat(s.liquidityLevel) + (s.slPrice ?? 0)).toFixed(5);
+  const slOk = slPips !== null && slPips <= cfg.maxSLPips;
+
   const levels = [
     { label: "Liquidity Swept", value: s.liquidityLevel, desc: "Equal highs/lows taken out — stop hunt confirmed" },
     { label: "Displacement Close", value: s.displacementClose, desc: "Strong impulse candle away from liquidity" },
@@ -321,6 +370,7 @@ function DetailPanel({ s, onClose }) {
     { label: "FVG High", value: s.fvgHigh, desc: "Top of Fair Value Gap imbalance zone" },
     { label: "FVG Low", value: s.fvgLow, desc: "Bottom of FVG — optimal entry zone" },
     { label: "Current Price", value: s.currentPrice, desc: s.inFVG ? "✓ Price is INSIDE the FVG" : s.nearFVG ? "⚡ Price is approaching FVG" : "Awaiting retrace into FVG" },
+    { label: `Stop Loss (${slPips ?? "?"} pips)`, value: slLevel, desc: slOk ? `✓ Within ${cfg.maxSLPips} pip max — valid setup` : `⚠ Exceeds ${cfg.maxSLPips} pip max SL — skip this setup`, highlight: !slOk },
   ];
 
   return (
@@ -365,11 +415,13 @@ function DetailPanel({ s, onClose }) {
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {levels.map(({ label, value, desc }) => (
             <div key={label} style={{
-              background: "#0d1420", border: "1px solid #1e2535", borderRadius: 8, padding: "10px 14px"
+              background: highlight ? "#7f1d1d18" : "#0d1420",
+              border: `1px solid ${highlight ? "#ef444430" : "#1e2535"}`,
+              borderRadius: 8, padding: "10px 14px"
             }}>
               <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span style={{ color: "#94a3b8", fontSize: 12 }}>{label}</span>
-                <span style={{ color: "#e2e8f0", fontFamily: "monospace", fontSize: 13, fontWeight: 600 }}>{value ?? "—"}</span>
+                <span style={{ color: highlight ? "#f87171" : "#94a3b8", fontSize: 12 }}>{label}</span>
+                <span style={{ color: highlight ? "#f87171" : "#e2e8f0", fontFamily: "monospace", fontSize: 13, fontWeight: 600 }}>{value ?? "—"}</span>
               </div>
               <p style={{ color: "#475569", fontSize: 11, margin: "4px 0 0" }}>{desc}</p>
             </div>
@@ -438,7 +490,7 @@ export default function ICTScannerLive() {
 
       try {
         const candles = await fetchCandles(symbol, tf, key);
-        const setup = analyzeCandles(candles);
+        const setup = analyzeCandles(candles, pair);
         if (setup) {
           results.push({ pair, tf, ...setup });
           setSetups(prev => [...prev, { pair, tf, ...setup }]
