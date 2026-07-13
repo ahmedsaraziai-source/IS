@@ -414,17 +414,17 @@ function DetailPanel({ s, onClose }) {
       <div style={{ marginBottom: 20 }}>
         <p style={{ color: "#475569", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>Price Levels</p>
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {levels.map(({ label, value, desc }) => (
-            <div key={label} style={{
-              background: highlight ? "#7f1d1d18" : "#0d1420",
-              border: `1px solid ${highlight ? "#ef444430" : "#1e2535"}`,
+          {levels.map((row) => (
+            <div key={row.label} style={{
+              background: row.highlight ? "#7f1d1d18" : "#0d1420",
+              border: `1px solid ${row.highlight ? "#ef444430" : "#1e2535"}`,
               borderRadius: 8, padding: "10px 14px"
             }}>
               <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span style={{ color: highlight ? "#f87171" : "#94a3b8", fontSize: 12 }}>{label}</span>
-                <span style={{ color: highlight ? "#f87171" : "#e2e8f0", fontFamily: "monospace", fontSize: 13, fontWeight: 600 }}>{value ?? "—"}</span>
+                <span style={{ color: row.highlight ? "#f87171" : "#94a3b8", fontSize: 12 }}>{row.label}</span>
+                <span style={{ color: row.highlight ? "#f87171" : "#e2e8f0", fontFamily: "monospace", fontSize: 13, fontWeight: 600 }}>{row.value ?? "—"}</span>
               </div>
-              <p style={{ color: "#475569", fontSize: 11, margin: "4px 0 0" }}>{desc}</p>
+              <p style={{ color: "#475569", fontSize: 11, margin: "4px 0 0" }}>{row.desc}</p>
             </div>
           ))}
         </div>
