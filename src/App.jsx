@@ -356,11 +356,12 @@ function DetailPanel({ s, onClose }) {
   );
 
   const biasColor = s.bias === "Bullish" ? "#00e5a0" : "#f87171";
-  const cfg = PIP_CONFIG[s.pair] ?? { pipSize: 0.0001, maxSLPips: 250 };
-  const slPips = s.slPrice ? Math.round(s.slPrice / cfg.pipSize) : null;
-  const slLevel = s.bias === "Bullish"
-    ? (parseFloat(s.liquidityLevel) - (s.slPrice ?? 0)).toFixed(5)
-    : (parseFloat(s.liquidityLevel) + (s.slPrice ?? 0)).toFixed(5);
+  const cfg = (s?.pair && PIP_CONFIG[s.pair]) ? PIP_CONFIG[s.pair] : { pipSize: 0.0001, maxSLPips: 250 };
+  const slPips = (s?.slPrice && cfg.pipSize) ? Math.round(s.slPrice / cfg.pipSize) : null;
+  const liqNum = parseFloat(s?.liquidityLevel ?? 0);
+  const slLevel = s?.bias === "Bullish"
+    ? (liqNum - (s.slPrice ?? 0)).toFixed(5)
+    : (liqNum + (s.slPrice ?? 0)).toFixed(5);
   const slOk = slPips !== null && slPips <= cfg.maxSLPips;
 
   const levels = [
@@ -373,7 +374,7 @@ function DetailPanel({ s, onClose }) {
     { label: `Stop Loss (${slPips ?? "?"} pips)`, value: slLevel, desc: slOk ? `✓ Within ${cfg.maxSLPips} pip max — valid setup` : `⚠ Exceeds ${cfg.maxSLPips} pip max SL — skip this setup`, highlight: !slOk },
   ];
 
-  return (
+  try { return (
     <div style={{ flex: 1, padding: "20px 24px", overflowY: "auto" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
         <div>
@@ -447,7 +448,11 @@ function DetailPanel({ s, onClose }) {
         <p style={{ color: "#475569", fontSize: 11, margin: "10px 0 0" }}>⚠ Scanner output only. Always manage risk.</p>
       </div>
     </div>
-  );
+  ); } catch(e) {
+    return <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:"#f87171",fontSize:13}}>
+      Error rendering setup: {e.message}
+    </div>;
+  }
 }
 
 // ── Main App ──
